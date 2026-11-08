@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android's own backup (Google account backup on Android 6–11) keeps only what can't be rebuilt:
+    the library (likes, playlists, saved albums, settings) and the taste profile. Downloads, the song
+    cache and Studio audio are left out: they're big, and Android drops the whole backup above 25 MB.
+-->
+<full-backup-content>
+    <include domain="file" path="library.json" />
+    <include domain="file" path="library.json.bak" />
+    <include domain="file" path="library.daily.json" />
+    <include domain="file" path="taste.json" />
+</full-backup-content>

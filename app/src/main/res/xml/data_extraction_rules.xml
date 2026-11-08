@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+: what goes to the Google account backup and to a new phone during device transfer.
+    Only the library and taste profile; never downloads, caches or Studio audio (see backup_rules.xml).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="library.json" />
+        <include domain="file" path="library.json.bak" />
+        <include domain="file" path="library.daily.json" />
+        <include domain="file" path="taste.json" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="library.json" />
+        <include domain="file" path="library.json.bak" />
+        <include domain="file" path="library.daily.json" />
+        <include domain="file" path="taste.json" />
+    </device-transfer>
+</data-extraction-rules>

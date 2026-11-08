@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-files-path name="music" path="Music/" />
+    <!-- Long playlists shared as a small text file. -->
+    <cache-path name="shared" path="shared/" />
+</paths>
