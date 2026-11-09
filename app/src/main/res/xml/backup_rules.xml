@@ -9,4 +9,5 @@
     <include domain="file" path="library.json.bak" />
     <include domain="file" path="library.daily.json" />
     <include domain="file" path="taste.json" />
+    <include domain="file" path="covers/" />
 </full-backup-content>

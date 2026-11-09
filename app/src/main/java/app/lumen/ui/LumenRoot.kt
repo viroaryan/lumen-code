@@ -41,6 +41,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.scale
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import app.lumen.identify.BubbleService
+import app.lumen.ui.components.LumenLogo
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -53,6 +63,7 @@ import app.lumen.ui.player.MiniPlayer
 import app.lumen.ui.player.PlayerScreen
 import app.lumen.ui.screens.CollectionScreen
 import app.lumen.ui.screens.HomeScreen
+import app.lumen.ui.screens.IdentifySheet
 import app.lumen.ui.screens.LibraryScreen
 import app.lumen.ui.screens.SearchScreen
 import app.lumen.ui.screens.SettingsScreen
@@ -149,6 +160,7 @@ fun LumenRoot(app: AppState) {
 
             TrackMenuSheet()
             AddToPlaylistSheet()
+            IdentifySheet()
         }
     }
 }
@@ -165,7 +177,9 @@ private fun BottomBar(app: AppState) {
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        tabs.forEach { tab ->
+        tabs.forEachIndexed { i, tab ->
+            // The song finder sits in the middle, between Search and Studio.
+            if (i == 2) FinderButton(app, Modifier.weight(1f))
             val selected = app.currentTab == tab.route
             Column(
                 Modifier.weight(1f).pressable({
@@ -189,5 +203,42 @@ private fun BottomBar(app: AppState) {
                 Text(tab.label, style = Lumen.type.micro.copy(letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified), color = if (selected) c.text else c.textDim)
             }
         }
+    }
+}
+
+/**
+ * The round Lumen button in the middle of the tab bar: opens the song finder and, once its
+ * permissions are given, turns the floating bubble on so it is ready over any app.
+ */
+@Composable
+private fun FinderButton(app: AppState, modifier: Modifier) {
+    val c = Lumen.colors
+    val context = LocalContext.current
+    val bubbleOn by BubbleService.running.collectAsState()
+    val pulse by rememberInfiniteTransition(label = "finder").animateFloat(
+        1f, 1.14f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "pulse",
+    )
+    val brand = Color(0xFF5466EC)
+    Column(
+        modifier.pressable({
+            app.playerOpen = false
+            app.identifyOpen = true
+            if (!bubbleOn && BubbleService.canRun(context) && BubbleService.start(context)) {
+                app.toast("Bubble is on. Open any app and tap it when a song plays")
+            }
+        }),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(40.dp)) {
+            if (bubbleOn) Box(Modifier.size(40.dp).scale(pulse).background(brand.copy(alpha = 0.25f), CircleShape))
+            Box(Modifier.size(36.dp).background(brand, CircleShape), contentAlignment = Alignment.Center) {
+                LumenLogo(Modifier.size(21.dp), color = Color.White)
+            }
+        }
+        Spacer(Modifier.height(1.dp))
+        Text(
+            "Identify", style = Lumen.type.micro.copy(letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified),
+            color = if (bubbleOn) c.text else c.textDim,
+        )
     }
 }

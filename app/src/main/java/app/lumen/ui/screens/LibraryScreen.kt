@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.lumen.Graph
+import app.lumen.data.CoverKeys
 import app.lumen.data.Kind
 import app.lumen.ui.LocalApp
 import app.lumen.ui.Special
@@ -51,6 +52,8 @@ fun LibraryScreen(contentPadding: PaddingValues) {
     val library by Graph.store.state.collectAsState()
     var filter by rememberSaveable { mutableStateOf(LibraryFilter.ALL) }
     var creating by rememberSaveable { mutableStateOf(false) }
+    // A custom cover replaces the plain icon; one whose file has gone falls back to the icon.
+    fun cover(key: String) = library.covers[key]?.takeIf { java.io.File(it).exists() }
 
     if (creating) {
         TextInputDialog("New playlist", "", "Create", onDismiss = { creating = false }) { name ->
@@ -76,19 +79,19 @@ fun LibraryScreen(contentPadding: PaddingValues) {
         }
         if (filter == LibraryFilter.ALL || filter == LibraryFilter.PLAYLISTS) {
             item {
-                LibraryRow("Liked Songs", "${library.liked.size} songs", null, { app.openSpecial(Special.LIKED) }, icon = LIcons.HeartFilled)
+                cover(CoverKeys.LIKED).let { art -> LibraryRow("Liked Songs", "${library.liked.size} songs", art, { app.openSpecial(Special.LIKED) }, icon = LIcons.HeartFilled.takeIf { art == null }) }
             }
             item {
-                LibraryRow("Downloads", "${library.downloads.size} songs · plays offline", null, { app.openSpecial(Special.DOWNLOADS) }, icon = LIcons.Downloaded)
+                cover(CoverKeys.DOWNLOADS).let { art -> LibraryRow("Downloads", "${library.downloads.size} songs · plays offline", art, { app.openSpecial(Special.DOWNLOADS) }, icon = LIcons.Downloaded.takeIf { art == null }) }
             }
             item {
-                LibraryRow("On this device", "Music files on your phone", null, { app.openSpecial(Special.LOCAL) }, icon = LIcons.Phone)
+                cover(CoverKeys.LOCAL).let { art -> LibraryRow("On this device", "Music files on your phone", art, { app.openSpecial(Special.LOCAL) }, icon = LIcons.Phone.takeIf { art == null }) }
             }
             item {
-                LibraryRow("Recently played", "${library.history.size} songs", null, { app.openSpecial(Special.HISTORY) }, icon = LIcons.History)
+                cover(CoverKeys.HISTORY).let { art -> LibraryRow("Recently played", "${library.history.size} songs", art, { app.openSpecial(Special.HISTORY) }, icon = LIcons.History.takeIf { art == null }) }
             }
             items(library.playlists, key = { it.id }) { p ->
-                LibraryRow(p.name, "Playlist · ${p.tracks.size} songs", p.tracks.firstOrNull()?.artwork, { app.openPlaylist(p.id) })
+                LibraryRow(p.name, "Playlist · ${p.tracks.size} songs", cover(CoverKeys.playlist(p.id)) ?: p.tracks.firstOrNull()?.artwork, { app.openPlaylist(p.id) })
             }
         }
         val saved = library.savedCollections.filter {

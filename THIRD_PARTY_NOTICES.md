@@ -13,7 +13,9 @@ Lumen is built on open-source work by others. Thank you to everyone behind these
 | [Desugar JDK libs](https://github.com/google/desugar_jdk_libs) | Newer Java APIs on older Android | GPL-2.0 with Classpath Exception |
 | [Inter](https://github.com/rsms/inter) font | Interface text | SIL OFL 1.1 (see `LICENSES/OFL-1.1-fonts.txt`) |
 | [Source Serif 4](https://github.com/adobe-fonts/source-serif) font | Titles | SIL OFL 1.1 (see `LICENSES/OFL-1.1-fonts.txt`) |
+| [SongRec](https://github.com/marin-m/SongRec) (algorithm, ported to Kotlin in `identify/Signature.kt`) | Audio fingerprint for the song finder | GPL-3.0 |
 | [JUnit 4](https://junit.org/junit4/) (tests only) | Unit tests | EPL-1.0 |
 
 Lyrics come from [LRCLIB](https://lrclib.net). Music comes from YouTube, YouTube Music, JioSaavn
-and SoundCloud and belongs to its owners; Lumen is not affiliated with any of them.
+and SoundCloud and belongs to its owners; Lumen is not affiliated with any of them. The song finder sends an audio fingerprint to the
+recognition service SongRec uses (Shazam); Lumen is not affiliated with it either.

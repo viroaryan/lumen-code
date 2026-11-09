@@ -57,6 +57,14 @@ import app.lumen.ui.CollectionCache
 import app.lumen.ui.LocalApp
 import app.lumen.ui.Special
 import app.lumen.ui.components.Artwork
+import app.lumen.ui.components.CoverEditor
+import app.lumen.ui.components.pressable
+import app.lumen.ui.components.reorderable
+import app.lumen.ui.components.rememberReorderState
+import app.lumen.data.CoverKeys
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import app.lumen.ui.components.ButtonStyle
 import app.lumen.ui.components.CollectionCard
 import app.lumen.ui.components.EmptyState
@@ -92,6 +100,8 @@ private fun TrackListLayout(
     headerIcon: ImageVector? = null,
     playlistId: String? = null,
     numbered: Boolean = false,
+    /** Library list key ([app.lumen.data.CoverKeys]): turns on drag-to-reorder and a custom cover. */
+    listKey: String? = null,
     actions: @Composable () -> Unit = {},
     footer: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {},
     empty: @Composable () -> Unit = {},
@@ -119,6 +129,30 @@ private fun TrackListLayout(
             ListSort.LONGEST -> found.sortedByDescending { it.durationMs }
         }
     }
+    // Long-press-and-drag reordering: only on the user's own lists, shown in their own order, unfiltered.
+    val distinctIds = remember(allTracks) { allTracks.distinctBy { it.id }.size == allTracks.size }
+    val canReorder = listKey != null && !loading && filter.isBlank() && sort == ListSort.DEFAULT && allTracks.size > 1 && distinctIds
+    var working by remember(allTracks) { mutableStateOf<List<Track>?>(null) }
+    val shown = if (canReorder) working ?: tracks else tracks
+    val reorder = rememberReorderState(list)
+    reorder.canMoveTo = { k -> k is String && k.startsWith("t:") }
+    reorder.onMove = { from, to ->
+        val l = (working ?: tracks).toMutableList()
+        val fi = l.indexOfFirst { "t:${it.id}" == from }
+        val ti = l.indexOfFirst { "t:${it.id}" == to }
+        if (fi < 0 || ti < 0) false else { l.add(ti, l.removeAt(fi)); working = l; true }
+    }
+    reorder.onEnd = {
+        val w = working
+        if (w != null && listKey != null && w.map { it.id } != allTracks.map { it.id }) Graph.store.reorder(listKey, w.map { it.id })
+    }
+
+    val covers by remember { Graph.store.state.map { it.covers }.distinctUntilChanged() }.collectAsState(Graph.store.current.covers)
+    val coverPath = listKey?.let { covers[it] }
+    val cover = remember(coverPath) { coverPath?.takeIf { java.io.File(it).exists() } }
+    var coverMenu by remember { mutableStateOf(false) }
+    if (listKey != null) CoverEditor(listKey, cover != null, coverMenu) { coverMenu = false }
+
     val playingThis = player.isPlaying && tracks.any { it.id == player.current?.id }
 
     Box(Modifier.fillMaxSize()) {
@@ -136,17 +170,29 @@ private fun TrackListLayout(
                         val s = if (list.firstVisibleItemIndex == 0) (1f - list.firstVisibleItemScrollOffset / 1200f).coerceIn(0.6f, 1f) else 0.6f
                         scaleX = s; scaleY = s
                     }
-                    if (headerIcon != null) {
-                        Box(
-                            Modifier.size(220.dp).graphicsLayer(shrink)
-                                .background(c.text, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
-                            contentAlignment = Alignment.Center,
-                        ) { Icon(headerIcon, null, Modifier.size(72.dp), tint = c.bg) }
-                    } else {
-                        Artwork(
-                            artwork, Modifier.size(220.dp).graphicsLayer(shrink),
-                            corner = 12.dp, circle = circleArt, placeholder = if (circleArt) LIcons.Artist else LIcons.Album,
-                        )
+                    Box(
+                        Modifier.size(220.dp).graphicsLayer(shrink)
+                            .then(if (listKey != null) Modifier.pressable({ coverMenu = true }) else Modifier),
+                    ) {
+                        when {
+                            cover != null -> Artwork(cover, Modifier.fillMaxSize(), corner = 12.dp)
+                            headerIcon != null -> Box(
+                                Modifier.fillMaxSize().background(c.text, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center,
+                            ) { Icon(headerIcon, null, Modifier.size(72.dp), tint = c.bg) }
+                            else -> Artwork(
+                                artwork, Modifier.fillMaxSize(),
+                                corner = 12.dp, circle = circleArt, placeholder = if (circleArt) LIcons.Artist else LIcons.Album,
+                            )
+                        }
+                        if (listKey != null) {
+                            // A small pencil says the picture can be changed.
+                            Box(
+                                Modifier.align(Alignment.BottomEnd).padding(10.dp).size(38.dp)
+                                    .background(c.bg.copy(alpha = 0.88f), androidx.compose.foundation.shape.CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) { Icon(LIcons.Edit, "Change cover", Modifier.size(18.dp), tint = c.text) }
+                        }
                     }
                     Spacer(Modifier.height(18.dp))
                     Text(
@@ -169,8 +215,16 @@ private fun TrackListLayout(
                     LIconButton(LIcons.Shuffle, { Graph.player.play(tracks, shuffle = true) }, enabled = tracks.isNotEmpty(), contentDescription = "Shuffle")
                     Spacer(Modifier.width(8.dp))
                     PlayButton(playingThis, {
-                        if (tracks.any { it.id == player.current?.id }) Graph.player.toggle() else Graph.player.play(tracks)
+                        if (tracks.any { it.id == player.current?.id }) Graph.player.toggle() else Graph.player.play(shown)
                     })
+                }
+            }
+            if (canReorder) {
+                item(key = "reorder-hint") {
+                    Text(
+                        "Hold a song, then drag it to move it", style = Lumen.type.small, color = c.textFaint,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
+                    )
                 }
             }
             if (finding) {
@@ -206,8 +260,24 @@ private fun TrackListLayout(
             } else if (tracks.isEmpty()) {
                 item { Text("No songs match \"$filter\"", style = Lumen.type.body, color = c.textDim, modifier = Modifier.padding(24.dp)) }
             } else {
-                itemsIndexed(tracks, key = { i, t -> "$i${t.id}" }) { i, t ->
-                    TrackRow(t, onClick = { Graph.player.play(tracks, i) }, index = i, showArt = !numbered, playlistId = playlistId)
+                itemsIndexed(shown, key = { i, t -> if (canReorder) "t:${t.id}" else "$i${t.id}" }) { i, t ->
+                    val key = "t:${t.id}"
+                    val dragging = canReorder && reorder.draggingKey == key
+                    TrackRow(
+                        t, onClick = { Graph.player.play(shown, i) }, index = i, showArt = !numbered, playlistId = playlistId,
+                        longPressMenu = !canReorder,
+                        dragHandle = Modifier.reorderable(reorder, key, canReorder),
+                        modifier = when {
+                            !canReorder -> Modifier
+                            dragging -> Modifier.zIndex(1f)
+                                .graphicsLayer {
+                                    translationY = reorder.offset; scaleX = 1.03f; scaleY = 1.03f; shadowElevation = 24f
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+                                }
+                                .background(c.surfaceHigh, androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                            else -> Modifier.animateItem()
+                        },
+                    )
                 }
             }
             footer()
@@ -345,6 +415,7 @@ fun UserPlaylistScreen(id: String, contentPadding: PaddingValues) {
         tracks = playlist.tracks,
         contentPadding = contentPadding,
         playlistId = id,
+        listKey = CoverKeys.playlist(id),
         headerIcon = if (playlist.tracks.isEmpty()) LIcons.Playlist else null,
         actions = {
             LIconButton(LIcons.Download, { val n = Graph.downloads.download(playlist.tracks); app.toast(if (n > 0) "Downloading $n songs" else "Nothing new to download") }, contentDescription = "Download")
@@ -379,7 +450,7 @@ fun SpecialScreen(kind: String, contentPadding: PaddingValues) {
     val library by Graph.store.state.collectAsState()
     when (kind) {
         Special.LIKED -> TrackListLayout(
-            "Liked Songs", summary(library.liked), null, library.liked, contentPadding, headerIcon = LIcons.HeartFilled,
+            "Liked Songs", summary(library.liked), null, library.liked, contentPadding, headerIcon = LIcons.HeartFilled, listKey = CoverKeys.LIKED,
             actions = {
                 LIconButton(LIcons.Download, { val n = Graph.downloads.download(library.liked); app.toast(if (n > 0) "Downloading $n songs" else "Nothing new to download") }, contentDescription = "Download")
                 if (library.liked.isNotEmpty()) {
@@ -394,6 +465,7 @@ fun SpecialScreen(kind: String, contentPadding: PaddingValues) {
             val waiting = maxOf(active.size, Graph.downloads.pendingCount())
             TrackListLayout(
                 "Downloads", summary(tracks) + " · offline" + (if (waiting > 0) " · $waiting downloading" else ""), null, tracks, contentPadding, headerIcon = LIcons.Downloaded,
+                listKey = CoverKeys.DOWNLOADS,
                 actions = {
                     if (waiting > 0) {
                         LButton("Stop all", { Graph.downloads.cancelAll(); app.toast("Downloads stopped") }, style = ButtonStyle.Secondary)
@@ -404,6 +476,7 @@ fun SpecialScreen(kind: String, contentPadding: PaddingValues) {
         }
         Special.HISTORY -> TrackListLayout(
             "Recently played", "${library.history.size} songs", null, library.history, contentPadding, headerIcon = LIcons.History,
+            listKey = CoverKeys.HISTORY,
             actions = {
                 if (library.history.isNotEmpty()) LIconButton(LIcons.Trash, { Graph.store.clearHistory() }, contentDescription = "Clear history")
             },
@@ -423,9 +496,12 @@ private fun LocalScreen(contentPadding: PaddingValues) {
     LaunchedEffect(granted) {
         if (granted) tracks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Graph.repo.localTracks(refresh = true) }
     }
+    // The user's dragged order is applied on top of what the phone reports.
+    val localOrder by remember { Graph.store.state.map { it.localOrder }.distinctUntilChanged() }.collectAsState(Graph.store.current.localOrder)
+    val ordered = remember(tracks, localOrder) { tracks?.let { Graph.store.orderLocal(it) } }
     TrackListLayout(
-        "On this device", tracks?.let { summary(it) } ?: "", null, tracks.orEmpty(), contentPadding,
-        loading = granted && tracks == null, headerIcon = LIcons.Phone,
+        "On this device", ordered?.let { summary(it) } ?: "", null, ordered.orEmpty(), contentPadding,
+        loading = granted && tracks == null, headerIcon = LIcons.Phone, listKey = CoverKeys.LOCAL,
         empty = {
             if (!granted) EmptyState(LIcons.Phone, "Play music from your phone", "Allow Lumen to read your music files.") {
                 LButton("Allow access", { launcher.launch(permission) })

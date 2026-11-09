@@ -76,6 +76,8 @@ class AppState(val nav: NavHostController, private val scope: CoroutineScope) {
     var currentTab by mutableStateOf(Routes.HOME)
     var trackMenu by mutableStateOf<TrackMenuRequest?>(null)
     var addToPlaylist by mutableStateOf<List<Track>?>(null)
+    /** The song finder sheet (the round button in the middle of the tab bar). */
+    var identifyOpen by mutableStateOf(false)
     val snackbar = SnackbarHostState()
 
     fun openCollection(c: Collection) {
@@ -109,6 +111,21 @@ class AppState(val nav: NavHostController, private val scope: CoroutineScope) {
                 is app.lumen.data.MusicRepository.Link.List -> openCollection(link.collection)
                 null -> toast("Couldn't open that link")
             }
+        }
+    }
+
+    /** Finds a song the song finder named in the user's sources and plays it, with a radio after it. */
+    fun playIdentified(song: app.lumen.data.IdentifiedSong) {
+        scope.launch {
+            toast("Finding “${song.title}”…")
+            val track = app.lumen.identify.SongFinder.findTrack(song)
+            if (track == null) {
+                toast("Couldn't find “${song.title}” in your sources")
+                return@launch
+            }
+            identifyOpen = false
+            app.lumen.Graph.player.startRadio(track)
+            playerOpen = true
         }
     }
 

@@ -53,6 +53,7 @@ import app.lumen.Graph
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import app.lumen.data.Collection
+import app.lumen.data.CoverKeys
 import app.lumen.data.Kind
 import app.lumen.data.Source
 import app.lumen.data.Track
@@ -70,6 +71,13 @@ fun TrackRow(
     index: Int? = null,
     playlistId: String? = null,
     showArt: Boolean = true,
+    /** False in lists you can reorder: there a long press picks the song up instead (the ⋮ menu stays). */
+    longPressMenu: Boolean = true,
+    /**
+     * The drag gesture of a reorderable list. It goes inside the tap handling so it sees the touch
+     * first and owns it once the hold turns into a drag.
+     */
+    dragHandle: Modifier = Modifier,
 ) {
     val c = Lumen.colors
     val app = LocalApp.current
@@ -83,7 +91,13 @@ fun TrackRow(
     Row(
         modifier
             .fillMaxWidth()
-            .pressable({ Graph.repo.prefetch(track, urgent = true); onClick() }, onLongClick = { app.trackMenu = TrackMenuRequest(track, playlistId) })
+            .pressable(
+                { Graph.repo.prefetch(track, urgent = true); onClick() },
+                // In a reorderable list the hold belongs to the drag (which handles it); a no-op here
+                // still stops a long hold from also counting as a tap and starting the song.
+                onLongClick = if (longPressMenu) ({ app.trackMenu = TrackMenuRequest(track, playlistId) }) else ({}),
+            )
+            .then(dragHandle)
             .padding(start = 20.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -311,7 +325,7 @@ fun AddToPlaylistSheet() {
             }
             LazyColumn(Modifier.padding(bottom = 16.dp)) {
                 items(library.playlists, key = { it.id }) { p ->
-                    LibraryRow(p.name, "${p.tracks.size} songs", p.tracks.firstOrNull()?.artwork, onClick = {
+                    LibraryRow(p.name, "${p.tracks.size} songs", library.covers[CoverKeys.playlist(p.id)] ?: p.tracks.firstOrNull()?.artwork, onClick = {
                         // Say plainly when nothing changed, instead of "Added" for songs already there.
                         val n = Graph.store.countNew(p.id, tracks)
                         Graph.store.addToPlaylist(p.id, tracks)

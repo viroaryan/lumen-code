@@ -69,7 +69,22 @@ data class LibraryState(
     val settings: Settings = Settings(),
     /** Old home of the saved queue; read once to migrate into [PlaybackMemory]. */
     val queue: SavedQueue = SavedQueue(),
+    /** The order the user dragged "On this device" into, by track id (the files themselves aren't ours). */
+    val localOrder: List<String> = emptyList(),
+    /** Custom cover pictures, by list key ([CoverKeys]) → image file inside the app's own storage. */
+    val covers: Map<String, String> = emptyMap(),
+    /** Songs the song finder recognised, newest first. */
+    val identified: List<IdentifiedSong> = emptyList(),
 )
+
+/** Keys for lists that can have a custom cover. */
+object CoverKeys {
+    const val LIKED = "liked"
+    const val DOWNLOADS = "downloads"
+    const val LOCAL = "local"
+    const val HISTORY = "history"
+    fun playlist(id: String) = "pl:$id"
+}
 
 /**
  * Everything the user owns, persisted as one JSON file. Writes are debounced off the main thread, go
@@ -222,6 +237,68 @@ class LibraryStore(context: Context, scope: CoroutineScope) {
         if (from !in p.tracks.indices || to !in p.tracks.indices) p
         else p.copy(tracks = p.tracks.toMutableList().apply { add(to, removeAt(from)) })
     }
+
+    // ---- Custom order (long-press and drag) -----------------------------------------------------
+
+    /**
+     * Puts a list into the order the user dragged it into. [ids] is the whole list as shown; anything
+     * that arrived while dragging (a new like, a finished download) is kept, never dropped.
+     */
+    fun reorder(list: String, ids: List<String>) = edit { s ->
+        when {
+            list == CoverKeys.LIKED -> s.copy(liked = s.liked.inOrder(ids, newFirst = true))
+            list == CoverKeys.HISTORY -> s.copy(history = s.history.inOrder(ids, newFirst = true))
+            list == CoverKeys.DOWNLOADS -> s.copy(
+                downloads = s.downloads.values.toList().inOrder(ids, newFirst = false).associateByTo(LinkedHashMap()) { it.id },
+            )
+            list == CoverKeys.LOCAL -> s.copy(localOrder = ids.distinct().take(50_000))
+            list.startsWith("pl:") -> {
+                val id = list.removePrefix("pl:")
+                s.copy(playlists = s.playlists.map { if (it.id == id) it.copy(tracks = it.tracks.inOrder(ids, newFirst = false)) else it })
+            }
+            else -> s
+        }
+    }
+
+    private fun List<Track>.inOrder(ids: List<String>, newFirst: Boolean): List<Track> {
+        val byId = HashMap<String, Track>(size * 2).also { m -> forEach { m.putIfAbsent(it.id, it) } }
+        val seen = HashSet<String>(size * 2)
+        val ordered = ids.mapNotNull { id -> byId[id]?.takeIf { seen.add(id) } }
+        val rest = filter { seen.add(it.id) }
+        return if (newFirst) rest + ordered else ordered + rest
+    }
+
+    /** Phone files in the user's own order; files not yet placed keep their usual spot at the end. */
+    fun orderLocal(tracks: List<Track>): List<Track> {
+        val order = _state.value.localOrder
+        if (order.isEmpty()) return tracks
+        val rank = HashMap<String, Int>(order.size * 2).also { m -> order.forEachIndexed { i, id -> m.putIfAbsent(id, i) } }
+        return tracks.sortedBy { rank[it.id] ?: Int.MAX_VALUE }
+    }
+
+    // ---- Covers ---------------------------------------------------------------------------------
+
+    /** Sets a list's cover and returns the picture it replaced, so the caller can delete that file. */
+    fun setCover(key: String, path: String): String? {
+        var old: String? = null
+        edit { s -> old = s.covers[key]; s.copy(covers = s.covers + (key to path)) }
+        return old?.takeIf { it != path }
+    }
+
+    fun removeCover(key: String): String? {
+        var old: String? = null
+        edit { s -> old = s.covers[key]; s.copy(covers = s.covers - key) }
+        return old
+    }
+
+    // ---- Song finder ----------------------------------------------------------------------------
+
+    fun addIdentified(song: IdentifiedSong) = edit { s ->
+        val rest = s.identified.filterNot { it.title.equals(song.title, true) && it.artist.equals(song.artist, true) }
+        s.copy(identified = (listOf(song) + rest).take(60))
+    }
+
+    fun removeIdentified(song: IdentifiedSong) = edit { s -> s.copy(identified = s.identified - song) }
 
     private fun editPlaylist(id: String, block: (UserPlaylist) -> UserPlaylist) = edit { s ->
         s.copy(playlists = s.playlists.map { if (it.id == id) block(it) else it })

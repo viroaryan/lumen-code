@@ -58,6 +58,15 @@ data class UserPlaylist(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+/** A song the song finder recognised (from the floating bubble or the Identify sheet). */
+@Serializable
+data class IdentifiedSong(
+    val title: String,
+    val artist: String,
+    val artwork: String? = null,
+    val at: Long = System.currentTimeMillis(),
+)
+
 data class SearchResults(
     val tracks: List<Track> = emptyList(),
     val albums: List<Collection> = emptyList(),

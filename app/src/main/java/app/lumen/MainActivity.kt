@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
+import app.lumen.data.IdentifiedSong
 import app.lumen.data.PlaylistShare
 import app.lumen.data.Track
 import app.lumen.data.source.Http
@@ -116,10 +117,22 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra(EXTRA_PLAY_TRACK)?.let { json ->
             intent.removeExtra(EXTRA_PLAY_TRACK)
             // Tapped a notification: play what it was about.
-            runCatching { Http.json.decodeFromString(Track.serializer(), json) }.getOrNull()?.let { track ->
+            // This activity can be opened by other apps too, so the song is checked like any outside input.
+            runCatching { Http.json.decodeFromString(Track.serializer(), json) }.getOrNull()?.let(PlaylistShare::safeTrack)?.let { track ->
                 if (track.video) Graph.player.play(listOf(track)) else Graph.player.startRadio(track)
                 appState?.playerOpen = true
             }
+        }
+        intent.getStringExtra(EXTRA_FIND_SONG)?.let { json ->
+            intent.removeExtra(EXTRA_FIND_SONG)
+            // "Play in Lumen" from the song finder bubble: look the song up and play it.
+            runCatching { Http.json.decodeFromString(IdentifiedSong.serializer(), json) }.getOrNull()
+                ?.takeIf { it.title.isNotBlank() && it.title.length <= 300 && it.artist.length <= 300 }
+                ?.let { appState?.playIdentified(it) }
+        }
+        if (intent.getBooleanExtra(EXTRA_OPEN_FINDER, false)) {
+            intent.removeExtra(EXTRA_OPEN_FINDER)
+            appState?.identifyOpen = true
         }
         if (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_VIEW) {
             val action = intent.action
@@ -209,5 +222,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN_PLAYER = "open_player"
         const val EXTRA_PLAY_TRACK = "play_track"
+        const val EXTRA_FIND_SONG = "find_song"
+        const val EXTRA_OPEN_FINDER = "open_finder"
     }
 }

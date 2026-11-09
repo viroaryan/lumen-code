@@ -11,6 +11,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import app.lumen.data.Covers
 import app.lumen.data.HomeFeed
 import app.lumen.data.LibraryStore
 import app.lumen.data.MusicRepository
@@ -128,6 +129,7 @@ class LumenApp : Application(), SingletonImageLoader.Factory {
         Graph.scope.launch(Dispatchers.IO) {
             delay(8_000)
             runCatching { StorageGuard.maintain(this@LumenApp) }.onFailure { Guardian.record("startup storage", it) }
+            Covers.prune(this@LumenApp, Graph.store)
         }
     }
 
@@ -135,11 +137,21 @@ class LumenApp : Application(), SingletonImageLoader.Factory {
     private fun learnFromLibrary() {
         val store = Graph.store
         Graph.scope.launch {
-            store.state.map { it.liked.firstOrNull() }.distinctUntilChanged { a, b -> a?.id == b?.id }.drop(1).filterNotNull()
-                .collect {
+            // Only songs that are new to Liked count: dragging the list into a new order is not a like.
+            var known: Set<String>? = null
+            store.state.map { it.liked }.distinctUntilChanged().collect { liked ->
+                val ids = liked.mapTo(HashSet(liked.size * 2)) { it.id }
+                val before = known
+                known = ids
+                if (before == null) return@collect
+                val added = liked.filter { it.id !in before }
+                // Many at once means a restored backup, not a tap on the heart: don't download them all.
+                if (added.size > 5) return@collect
+                added.forEach {
                     Graph.taste.onLike(it)
                     if (store.settings.autoDownloadLiked) Graph.downloads.download(it)
                 }
+            }
         }
         Graph.scope.launch {
             store.state.map { it.searches.firstOrNull() }.distinctUntilChanged().drop(1).filterNotNull()
