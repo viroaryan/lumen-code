@@ -80,9 +80,20 @@ class BubbleService : Service() {
         fun canRun(context: Context) = Settings.canDrawOverlays(context) && SongFinder.hasMic(context)
 
         /** Starts the bubble. Call from the app while it's on screen (Android requires it for the mic). */
-        fun start(context: Context): Boolean {
+        /** The phone-sound capture the user allowed for this bubble session, if any. */
+        @Volatile var projection: android.media.projection.MediaProjection? = null
+            private set
+
+        /**
+         * Starts the bubble. Call from the app while it's on screen (Android requires it for the mic).
+         * [captureCode]/[captureData] are the result of the system "start recording?" dialog; with
+         * them the finder hears the phone's own sound, without them it uses the mic.
+         */
+        fun start(context: Context, captureCode: Int = 0, captureData: Intent? = null): Boolean {
             if (!canRun(context)) return false
-            return runCatching { ContextCompat.startForegroundService(context, Intent(context, BubbleService::class.java)); true }
+            val intent = Intent(context, BubbleService::class.java)
+            if (captureData != null) intent.putExtra("capture_code", captureCode).putExtra("capture_data", captureData)
+            return runCatching { ContextCompat.startForegroundService(context, intent); true }
                 .onFailure { Guardian.record("bubble start", it) }.getOrDefault(false)
         }
 
@@ -112,7 +123,17 @@ class BubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
-        if (!goForeground() || !Settings.canDrawOverlays(this)) { stopSelf(); return START_NOT_STICKY }
+        val captureData = intent?.let { androidx.core.content.IntentCompat.getParcelableExtra(it, "capture_data", Intent::class.java) }
+        if (!goForeground(captureData != null) || !Settings.canDrawOverlays(this)) { stopSelf(); return START_NOT_STICKY }
+        if (captureData != null && Build.VERSION.SDK_INT >= 29) runCatching {
+            val manager = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+            val p = manager.getMediaProjection(intent.getIntExtra("capture_code", 0), captureData)
+            p?.registerCallback(object : android.media.projection.MediaProjection.Callback() {
+                override fun onStop() { if (projection === p) projection = null }
+            }, android.os.Handler(mainLooper))
+            projection?.let { old -> runCatching { old.stop() } }
+            projection = p
+        }.onFailure { Guardian.record("bubble capture", it) }
         if (bubble == null) showBubble()
         _running.value = true
         // Not sticky: after the system ends the process, the user turns it on again from the app
@@ -120,7 +141,7 @@ class BubbleService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun goForeground(): Boolean = runCatching {
+    private fun goForeground(capture: Boolean): Boolean = runCatching {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(
@@ -144,7 +165,11 @@ class BubbleService : Service() {
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
-        val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+        val type = when {
+            Build.VERSION.SDK_INT < 30 -> if (capture && Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0
+            capture -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
         ServiceCompat.startForeground(this, NOTIFICATION_ID, n, type)
         true
     }.onFailure { Guardian.record("bubble foreground", it) }.getOrDefault(false)
@@ -293,7 +318,11 @@ class BubbleService : Service() {
         b.progress = 0f
         showCard().listening()
         listening = scope.launch {
-            val outcome = SongFinder.identify(this@BubbleService) { p -> b.post { b.progress = p } }
+            val outcome = SongFinder.identify(
+                this@BubbleService,
+                projection = projection.takeUnless { Graph.store.settings.finderMic },
+                onMicFallback = { b.post { card?.note("The phone's sound is silent. Listening with the mic…") } },
+            ) { p -> b.post { b.progress = p } }
             when (outcome) {
                 is SongFinder.Outcome.Found -> {
                     lastSong = outcome.song
@@ -493,10 +522,12 @@ class BubbleService : Service() {
             art.setColorFilter(Color.WHITE)
         }
 
+        fun note(text: String) { subtitle.text = text }
+
         fun listening() {
             resetArt()
             title.text = "Listening…"
-            subtitle.text = "Keep the music playing out loud"
+            subtitle.text = if (projection != null && !Graph.store.settings.finderMic) "Hearing what this phone is playing" else "Keep the music playing out loud"
             action.visibility = View.GONE
         }
 
@@ -543,6 +574,8 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         _running.value = false
+        projection?.let { p -> runCatching { p.stop() } }
+        projection = null
         listening?.cancel()
         opening?.cancel()
         scope.cancel()

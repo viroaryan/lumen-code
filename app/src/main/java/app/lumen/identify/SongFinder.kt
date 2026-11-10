@@ -84,18 +84,51 @@ object SongFinder {
      * Listens and identifies. [onProgress] gets 0..1 as listening goes on. Cancelling the calling
      * coroutine stops the microphone at once.
      */
-    suspend fun identify(context: Context, onProgress: (Float) -> Unit = {}): Outcome {
+    suspend fun identify(
+        context: Context,
+        /** When given, the phone's own sound is heard (any app, earphones too); the mic is the fallback. */
+        projection: android.media.projection.MediaProjection? = null,
+        onMicFallback: () -> Unit = {},
+        onProgress: (Float) -> Unit = {},
+    ): Outcome {
         if (!hasMic(context)) return Outcome.NoPermission
         if (!busy.compareAndSet(false, true)) return Outcome.MicBusy
         try {
-            return withContext(Dispatchers.IO) { listenAndAsk(onProgress) }
+            return withContext(Dispatchers.IO) {
+                val inside = if (projection != null && Build.VERSION.SDK_INT >= 29) listenAndAsk(projection, onProgress) else null
+                // Silence from the phone itself means the playing app doesn't share its sound
+                // (some do that), or nothing is playing here: listen to the room instead.
+                if (inside == null || inside == Outcome.TooQuiet || inside == Outcome.MicBusy) {
+                    if (inside != null) onMicFallback()
+                    listenAndAsk(null, onProgress)
+                } else inside
+            }
         } finally {
             busy.set(false)
         }
     }
 
     @SuppressLint("MissingPermission") // checked in identify()
-    private fun openRecorder(): Pair<AudioRecord, Int>? {
+    private fun openRecorder(projection: android.media.projection.MediaProjection?): Pair<AudioRecord, Int>? {
+        if (projection != null && Build.VERSION.SDK_INT >= 29) {
+            for (rate in intArrayOf(RATE, 48_000, 44_100)) {
+                val rec = runCatching {
+                    val config = android.media.AudioPlaybackCaptureConfiguration.Builder(projection)
+                        .addMatchingUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .addMatchingUsage(android.media.AudioAttributes.USAGE_GAME)
+                        .addMatchingUsage(android.media.AudioAttributes.USAGE_UNKNOWN)
+                        .build()
+                    AudioRecord.Builder()
+                        .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build())
+                        .setBufferSizeInBytes(rate * 2)
+                        .setAudioPlaybackCaptureConfig(config)
+                        .build()
+                }.getOrNull() ?: continue
+                if (rec.state == AudioRecord.STATE_INITIALIZED) return rec to rate
+                rec.release()
+            }
+            return null
+        }
         for (rate in intArrayOf(RATE, 48_000, 44_100)) {
             val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             if (min <= 0) continue
@@ -108,8 +141,10 @@ object SongFinder {
         return null
     }
 
-    private suspend fun listenAndAsk(onProgress: (Float) -> Unit): Outcome = coroutineScope {
-        val (rec, rate) = openRecorder() ?: return@coroutineScope Outcome.MicBusy
+    private suspend fun listenAndAsk(projection: android.media.projection.MediaProjection?, onProgress: (Float) -> Unit): Outcome = coroutineScope {
+        val (rec, rate) = openRecorder(projection) ?: return@coroutineScope Outcome.MicBusy
+        // The phone's own sound is exact silence when nothing shares it; a room is never that quiet.
+        val quiet = if (projection != null) 6 else 120
         val pcm = ShortArray(RATE * MAX_SECONDS)
         val written = AtomicInteger(0)
         val done = AtomicBoolean(false)
@@ -143,7 +178,11 @@ object SongFinder {
                 val end = written.get()
                 if (end < RATE * 2) break
                 val start = maxOf(0, end - WINDOW_SECONDS * RATE)
-                if (loudness(pcm, start, end) < 120) { outcome = Outcome.TooQuiet; if (done.get()) break else continue }
+                if (loudness(pcm, start, end) < quiet) {
+                    outcome = Outcome.TooQuiet
+                    // No point waiting 15 s on a silent phone: hand over to the mic now.
+                    if (done.get() || projection != null) break else continue
+                }
                 heardMusic = true
                 val (uri, ms) = withContext(Dispatchers.Default) { SignatureGenerator.of(pcm, start, end) }
                 val match = try {

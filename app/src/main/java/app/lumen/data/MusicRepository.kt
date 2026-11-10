@@ -407,7 +407,20 @@ class MusicRepository(
         return match?.let { listOf(it) + saavn.radio(it) }.orEmpty()
     }
 
-    suspend fun lyrics(track: Track): Lyrics? = withContext(Dispatchers.IO) { LyricsSource.fetch(track) }
+    suspend fun lyrics(track: Track): Lyrics? = lyricsAll(track).firstOrNull()
+
+    /** The last few songs' lyrics, so reopening the panel or going back a song is instant. */
+    private val lyricsCache = object : LinkedHashMap<String, List<Lyrics>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Lyrics>>?) = size > 24
+    }
+
+    /** Every version of the song's lyrics (one per script), best first. */
+    suspend fun lyricsAll(track: Track): List<Lyrics> {
+        synchronized(lyricsCache) { lyricsCache[track.id] }?.let { return it }
+        val found = withContext(Dispatchers.IO) { LyricsSource.fetchAll(track) }
+        if (found.isNotEmpty()) synchronized(lyricsCache) { lyricsCache[track.id] = found }
+        return found
+    }
 
     @Volatile private var localCache: List<Track>? = null
     fun localTracks(refresh: Boolean = false): List<Track> {

@@ -16,6 +16,6 @@ Lumen is built on open-source work by others. Thank you to everyone behind these
 | [SongRec](https://github.com/marin-m/SongRec) (algorithm, ported to Kotlin in `identify/Signature.kt`) | Audio fingerprint for the song finder | GPL-3.0 |
 | [JUnit 4](https://junit.org/junit4/) (tests only) | Unit tests | EPL-1.0 |
 
-Lyrics come from [LRCLIB](https://lrclib.net). Music comes from YouTube, YouTube Music, JioSaavn
+Lyrics come from [LRCLIB](https://lrclib.net), and from NetEase Cloud Music when LRCLIB has none. Music comes from YouTube, YouTube Music, JioSaavn
 and SoundCloud and belongs to its owners; Lumen is not affiliated with any of them. The song finder sends an audio fingerprint to the
 recognition service SongRec uses (Shazam); Lumen is not affiliated with it either.

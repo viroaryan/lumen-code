@@ -13,6 +13,8 @@
     <!-- The floating song finder: the bubble over other apps, and its mic while it listens. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Lets the song finder hear the phone's own sound (works with earphones). Sound only, never the screen. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- Keeps the background job (storage upkeep, picks) scheduled after the phone restarts. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission
@@ -86,7 +88,7 @@
         <service
             android:name=".identify.BubbleService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|mediaProjection" />
 
         <receiver
             android:name=".playback.PipActionReceiver"

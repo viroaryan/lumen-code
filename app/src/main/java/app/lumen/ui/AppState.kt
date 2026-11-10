@@ -154,7 +154,7 @@ class AppState(val nav: NavHostController, private val scope: CoroutineScope) {
     fun toast(message: String) {
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
-            snackbar.showSnackbar(message)
+            snackbar.showSnackbar(Lang.tr(message))
         }
     }
 
@@ -162,7 +162,7 @@ class AppState(val nav: NavHostController, private val scope: CoroutineScope) {
     fun toast(message: String, action: String, onAction: () -> Unit) {
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
-            val result = snackbar.showSnackbar(message, actionLabel = action, duration = androidx.compose.material3.SnackbarDuration.Long)
+            val result = snackbar.showSnackbar(Lang.tr(message), actionLabel = Lang.tr(action), duration = androidx.compose.material3.SnackbarDuration.Long)
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) onAction()
         }
     }

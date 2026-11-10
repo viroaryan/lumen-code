@@ -38,7 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import app.lumen.data.Track
 import app.lumen.ui.components.ButtonStyle
 import app.lumen.ui.components.LButton
-import androidx.compose.material3.Text
+import app.lumen.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue

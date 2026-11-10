@@ -97,6 +97,23 @@ data class HomeSection(
     }
 }
 
-data class LyricLine(val timeMs: Long, val text: String)
+/** One word of a line and the moment it's sung. */
+data class LyricWord(val timeMs: Long, val text: String)
 
-data class Lyrics(val lines: List<LyricLine>, val synced: Boolean)
+/**
+ * A line of lyrics. [words] is filled when the source has real word-by-word timing; otherwise the
+ * player estimates each word's moment from the line's length.
+ */
+data class LyricLine(val timeMs: Long, val text: String, val endMs: Long = 0, val words: List<LyricWord> = emptyList())
+
+/**
+ * One version of a song's lyrics. A song can have several: the original script (हिन्दी, 한국어…) and
+ * a romanised one, for example. [label] names the script for the picker.
+ */
+data class Lyrics(
+    val lines: List<LyricLine>,
+    val synced: Boolean,
+    val label: String = "",
+    /** Real word-by-word timing from the source (not estimated). */
+    val wordSync: Boolean = false,
+)

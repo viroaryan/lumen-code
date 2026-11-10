@@ -27,7 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.Text
+import app.lumen.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
@@ -223,9 +223,6 @@ private fun FinderButton(app: AppState, modifier: Modifier) {
         modifier.pressable({
             app.playerOpen = false
             app.identifyOpen = true
-            if (!bubbleOn && BubbleService.canRun(context) && BubbleService.start(context)) {
-                app.toast("Bubble is on. Open any app and tap it when a song plays")
-            }
         }),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

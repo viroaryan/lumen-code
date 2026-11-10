@@ -31,7 +31,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
+import app.lumen.ui.components.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,6 +49,12 @@ import app.lumen.data.MusicRepository
 import app.lumen.data.LibraryBackup
 import app.lumen.data.Source
 import app.lumen.data.ThemeMode
+import app.lumen.ui.theme.Palettes
+import app.lumen.ui.theme.Fonts
+import app.lumen.ui.Lang
+import app.lumen.ui.components.Chip
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import app.lumen.data.source.Quality
 import app.lumen.ui.LocalApp
 import app.lumen.ui.components.LIconButton
@@ -123,6 +129,34 @@ fun SettingsScreen(contentPadding: PaddingValues) {
                 listOf("System" to ThemeMode.SYSTEM, "Light" to ThemeMode.LIGHT, "Dark" to ThemeMode.DARK),
                 settings.theme,
             ) { mode -> Graph.store.updateSettings { it.copy(theme = mode) } }
+        }
+        item {
+            Label("Colour")
+            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(Palettes.all) { (id, name) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Chip(name, settings.palette == id, { Graph.store.updateSettings { it.copy(palette = id) } })
+                    }
+                }
+            }
+        }
+        item {
+            Label("Font")
+            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(Fonts.all) { (id, name) -> Chip(name, settings.font == id, { Graph.store.updateSettings { it.copy(font = id) } }) }
+            }
+        }
+        item {
+            Label("Text size")
+            Segmented(listOf("Small" to 0.9f, "Normal" to 1f, "Large" to 1.12f, "Extra large" to 1.25f), settings.textScale) { v ->
+                Graph.store.updateSettings { it.copy(textScale = v) }
+            }
+        }
+        item {
+            Label("Language")
+            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(Lang.all) { (id, name) -> Chip(name, settings.language == id, { Graph.store.updateSettings { it.copy(language = id) } }) }
+            }
         }
 
         item { Group("Playback") }

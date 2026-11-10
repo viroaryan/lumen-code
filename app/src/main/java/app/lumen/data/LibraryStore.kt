@@ -40,6 +40,17 @@ data class Settings(
     val cacheLimitMb: Int = 0,
     /** Every song you like is also saved for offline listening. */
     val autoDownloadLiked: Boolean = false,
+    /** The script last picked for lyrics ("हिन्दी", "Latin (A–Z)"…); used again when a song has it. */
+    val lyricsScript: String = "",
+    /** Colour theme, by [app.lumen.ui.theme.Palettes] id. */
+    val palette: String = "classic",
+    /** Typeface, by [app.lumen.ui.theme.Fonts] id. */
+    val font: String = "inter",
+    val textScale: Float = 1f,
+    /** App language code ("en", "hi"…). */
+    val language: String = "en",
+    /** Song finder listens through the mic (music outside the phone) instead of the phone's own sound. */
+    val finderMic: Boolean = false,
 )
 
 @Serializable

@@ -57,6 +57,71 @@ val DarkColors = LumenColors(
     isDark = true,
 )
 
+/** Colour themes. "classic" is Lumen's paper-and-ink; the others tint the same design with one hue. */
+object Palettes {
+    /** id → name shown in Settings. */
+    val all = listOf(
+        "classic" to "Classic", "indigo" to "Indigo", "ocean" to "Ocean", "forest" to "Forest",
+        "sunset" to "Sunset", "rose" to "Rose", "lavender" to "Lavender", "black" to "Pure black",
+    )
+    private val hues = mapOf("indigo" to 232f, "ocean" to 200f, "forest" to 150f, "sunset" to 24f, "rose" to 345f, "lavender" to 275f)
+
+    fun colors(id: String, dark: Boolean): LumenColors {
+        if (id == "black" && dark) return DarkColors.copy(bg = Color.Black, surface = Color(0xFF0E0E0E), surfaceHigh = Color(0xFF191919), line = Color(0xFF1F1F1F))
+        val h = hues[id] ?: return if (dark) DarkColors else LightColors
+        return if (dark) LumenColors(
+            bg = Color.hsl(h, 0.30f, 0.055f), surface = Color.hsl(h, 0.26f, 0.10f), surfaceHigh = Color.hsl(h, 0.24f, 0.15f),
+            line = Color.hsl(h, 0.20f, 0.18f), text = Color.hsl(h, 0.65f, 0.92f), textDim = Color.hsl(h, 0.18f, 0.68f),
+            textFaint = Color.hsl(h, 0.12f, 0.45f), isDark = true,
+        ) else LumenColors(
+            bg = Color.hsl(h, 0.40f, 0.97f), surface = Color.hsl(h, 0.34f, 0.93f), surfaceHigh = Color.hsl(h, 0.30f, 0.885f),
+            line = Color.hsl(h, 0.24f, 0.86f), text = Color.hsl(h, 0.60f, 0.17f), textDim = Color.hsl(h, 0.16f, 0.40f),
+            textFaint = Color.hsl(h, 0.12f, 0.60f), isDark = false,
+        )
+    }
+
+    /** A swatch for the picker. */
+    fun swatch(id: String): Color = when (id) {
+        "classic" -> Color(0xFF8A877C)
+        "black" -> Color.Black
+        else -> Color.hsl(hues[id] ?: 0f, 0.6f, 0.55f)
+    }
+}
+
+/** Typefaces. Inter and Source Serif ship with the app; the rest are the phone's own fonts. */
+object Fonts {
+    val all = listOf("inter" to "Inter", "system" to "Phone font", "serif" to "Serif", "mono" to "Mono", "condensed" to "Condensed", "casual" to "Handwritten")
+
+    /** (text family, headline family) */
+    fun families(id: String): Pair<FontFamily, FontFamily> = when (id) {
+        "system" -> FontFamily.Default to Serif
+        "serif" -> Serif to Serif
+        "mono" -> FontFamily.Monospace to FontFamily.Monospace
+        "condensed" -> device("sans-serif-condensed").let { it to it }
+        "casual" -> FontFamily.Cursive to FontFamily.Cursive
+        else -> Inter to Serif
+    }
+
+    private fun device(name: String) = FontFamily(
+        Font(androidx.compose.ui.text.font.DeviceFontFamilyName(name), FontWeight.Normal),
+        Font(androidx.compose.ui.text.font.DeviceFontFamilyName(name), FontWeight.Medium),
+        Font(androidx.compose.ui.text.font.DeviceFontFamilyName(name), FontWeight.SemiBold),
+        Font(androidx.compose.ui.text.font.DeviceFontFamilyName(name), FontWeight.Bold),
+    )
+
+    fun type(id: String, scale: Float): LumenType {
+        val (body, head) = families(id)
+        val s = scale.coerceIn(0.85f, 1.3f)
+        fun TextStyle.with(family: FontFamily) = copy(fontFamily = family, fontSize = fontSize * s, lineHeight = lineHeight * s)
+        val base = LumenType()
+        return LumenType(
+            display = base.display.with(head), title = base.title.with(head), heading = base.heading.with(body),
+            body = base.body.with(body), bodyStrong = base.bodyStrong.with(body), small = base.small.with(body),
+            label = base.label.with(body), micro = base.micro.with(body),
+        )
+    }
+}
+
 private fun variable(res: Int, weight: Int) =
     Font(res, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
 
@@ -94,13 +159,13 @@ object Lumen {
 }
 
 @Composable
-fun LumenTheme(mode: ThemeMode, content: @Composable () -> Unit) {
+fun LumenTheme(mode: ThemeMode, palette: String = "classic", font: String = "inter", textScale: Float = 1f, content: @Composable () -> Unit) {
     val dark = when (mode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    val c = if (dark) DarkColors else LightColors
+    val c = androidx.compose.runtime.remember(palette, dark) { Palettes.colors(palette, dark) }
     val scheme = if (dark) darkColorScheme(
         primary = c.text, onPrimary = c.bg, secondary = c.textDim, background = c.bg, onBackground = c.text,
         surface = c.bg, onSurface = c.text, surfaceVariant = c.surface, onSurfaceVariant = c.textDim,
@@ -114,7 +179,7 @@ fun LumenTheme(mode: ThemeMode, content: @Composable () -> Unit) {
         surfaceContainerLow = c.surface, outline = c.line, outlineVariant = c.line, secondaryContainer = c.surfaceHigh,
         onSecondaryContainer = c.text, primaryContainer = c.surfaceHigh, onPrimaryContainer = c.text,
     )
-    val type = LumenType()
+    val type = androidx.compose.runtime.remember(font, textScale) { Fonts.type(font, textScale) }
     CompositionLocalProvider(LocalColors provides c, LocalType provides type) {
         MaterialTheme(
             colorScheme = scheme,

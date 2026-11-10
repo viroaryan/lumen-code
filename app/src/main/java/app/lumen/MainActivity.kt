@@ -36,6 +36,7 @@ import app.lumen.data.Track
 import app.lumen.data.source.Http
 import app.lumen.playback.PipActionReceiver
 import app.lumen.ui.AppState
+import app.lumen.ui.Lang
 import app.lumen.ui.LumenRoot
 import app.lumen.ui.findLink
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -64,9 +65,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Only the theme matters up here; reading the whole library would recompose the entire app
             // every time a song was added to history or the queue was saved.
-            val theme by remember { Graph.store.state.map { it.settings.theme }.distinctUntilChanged() }
-                .collectAsState(Graph.store.settings.theme)
-            LumenTheme(theme) {
+            val look by remember { Graph.store.state.map { it.settings }.map { Look(it.theme, it.palette, it.font, it.textScale, it.language) }.distinctUntilChanged() }
+                .collectAsState(Graph.store.settings.let { Look(it.theme, it.palette, it.font, it.textScale, it.language) })
+            Lang.code = look.language
+            LumenTheme(look.theme, look.palette, look.font, look.textScale) {
                 val dark = LocalColors.current.isDark
                 LaunchedEffect(dark) {
                     val style = if (dark) SystemBarStyle.dark(Color.TRANSPARENT) else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
@@ -220,6 +222,9 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPip = isInPictureInPictureMode
     }
+
+    /** Everything about how the app looks; the only settings the whole screen redraws for. */
+    private data class Look(val theme: app.lumen.data.ThemeMode, val palette: String, val font: String, val textScale: Float, val language: String)
 
     companion object {
         const val EXTRA_OPEN_PLAYER = "open_player"

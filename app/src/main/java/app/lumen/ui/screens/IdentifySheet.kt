@@ -35,7 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
+import app.lumen.ui.components.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +66,7 @@ import app.lumen.identify.BubbleService
 import app.lumen.identify.SongFinder
 import app.lumen.ui.LocalApp
 import app.lumen.ui.components.Artwork
+import app.lumen.ui.components.Chip
 import app.lumen.ui.components.ButtonStyle
 import app.lumen.ui.components.LButton
 import app.lumen.ui.components.LIconButton
@@ -74,6 +75,8 @@ import app.lumen.ui.components.pressable
 import app.lumen.ui.theme.LIcons
 import app.lumen.ui.theme.Lumen
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 private sealed interface Hearing {
@@ -118,25 +121,46 @@ fun IdentifySheet() {
         hearing = Hearing.Listening
         progress = 0f
         job = scope.launch {
-            val outcome = SongFinder.identify(context) { p -> progress = p }
+            val outcome = SongFinder.identify(context, projection = BubbleService.projection.takeUnless { Graph.store.settings.finderMic }) { p -> progress = p }
             if (outcome is SongFinder.Outcome.Found) Graph.store.addIdentified(outcome.song)
             hearing = Hearing.Result(outcome)
         }
     }
 
-    fun startBubble() {
-        if (!SongFinder.hasMic(context)) { afterMic = { startBubble() }; micPermission.launch(Manifest.permission.RECORD_AUDIO); return }
-        if (!Settings.canDrawOverlays(context)) {
-            wantBubble = true
-            app.toast("Allow \"Display over other apps\" for Lumen, then come back")
-            runCatching {
-                context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
-            }.onFailure { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) }
-            return
-        }
-        if (BubbleService.start(context)) app.toast("Bubble is on. Open any app and tap it when a song plays")
-        else app.toast("Couldn't start the bubble")
+    var setupOpen by remember { mutableStateOf(false) }
+    val useMic by remember { Graph.store.state.map { it.settings.finderMic }.distinctUntilChanged() }.collectAsState(Graph.store.settings.finderMic)
+
+    fun bubbleStarted(ok: Boolean, phoneSound: Boolean) {
+        app.toast(
+            when {
+                !ok -> "Couldn't start the bubble"
+                phoneSound -> "Bubble is on. Open any app and tap it when a song plays"
+                else -> "Bubble is on, listening with the mic"
+            },
+        )
     }
+
+    // Android's own "Start recording?" question. Lumen takes only the sound from it, never the picture.
+    val capture = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode == android.app.Activity.RESULT_OK && data != null) bubbleStarted(BubbleService.start(context, result.resultCode, data), true)
+        else bubbleStarted(BubbleService.start(context), false)
+    }
+
+    fun startBubble() {
+        // Anything still missing: the setup screen walks through it, one step at a time.
+        if (!SongFinder.hasMic(context) || !Settings.canDrawOverlays(context)) { setupOpen = true; return }
+        if (!Graph.store.settings.finderMic && android.os.Build.VERSION.SDK_INT >= 29) {
+            val ok = runCatching {
+                val manager = context.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+                capture.launch(manager.createScreenCaptureIntent())
+            }.isSuccess
+            if (ok) return
+        }
+        bubbleStarted(BubbleService.start(context), false)
+    }
+
+    if (setupOpen) FinderSetup(onClose = { setupOpen = false }, onReady = { setupOpen = false; startBubble() })
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         canOverlay = Settings.canDrawOverlays(context)
@@ -189,7 +213,24 @@ fun IdentifySheet() {
                 }
             }
             item {
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(20.dp))
+                Text("Listen to", style = Lumen.type.micro, color = c.textDim, modifier = Modifier.padding(horizontal = 24.dp))
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    fun pick(mic: Boolean) {
+                        if (mic == useMic) return
+                        Graph.store.updateSettings { it.copy(finderMic = mic) }
+                        // Phone sound needs Android's permission for this bubble session: restart it to ask.
+                        if (!mic && bubbleOn && BubbleService.projection == null) { BubbleService.stop(context); startBubble() }
+                    }
+                    Chip("This phone's sound", !useMic, { pick(false) })
+                    Chip("Mic (music outside)", useMic, { pick(true) })
+                }
+                Text(
+                    if (useMic) "Hears music playing near the phone: a laptop, a TV, a shop. Earphones can't be heard this way."
+                    else "Hears what this phone is playing in any app, with earphones too. If an app keeps its sound private, Lumen switches to the mic by itself.",
+                    style = Lumen.type.small, color = c.textDim, modifier = Modifier.padding(horizontal = 24.dp),
+                )
+                Spacer(Modifier.height(14.dp))
                 Row(
                     Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.surfaceHigh)
                         .padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
@@ -244,6 +285,99 @@ fun IdentifySheet() {
             }
             item { Spacer(Modifier.height(20.dp)) }
         }
+    }
+}
+
+/**
+ * The setup screen for the floating bubble: every permission as its own step, with why it's needed,
+ * a tick when it's done, and what to do when the phone says "Restricted setting".
+ */
+@Composable
+private fun FinderSetup(onClose: () -> Unit, onReady: () -> Unit) {
+    val context = LocalContext.current
+    val c = Lumen.colors
+    var mic by remember { mutableStateOf(SongFinder.hasMic(context)) }
+    var overlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    fun notifOn() = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+    var notif by remember { mutableStateOf(notifOn()) }
+    /** The overlay settings were opened but the switch didn't get turned on: likely "Restricted setting". */
+    var overlayTried by remember { mutableStateOf(false) }
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { mic = it }
+    val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { notif = notifOn() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { mic = SongFinder.hasMic(context); overlay = Settings.canDrawOverlays(context); notif = notifOn() }
+
+    fun appInfo() = runCatching {
+        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+    }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        LazyColumn(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp).clip(RoundedCornerShape(24.dp)).background(c.surface).padding(horizontal = 18.dp, vertical = 20.dp),
+        ) {
+            item {
+                Text("Set up the song finder", style = Lumen.type.title, color = c.text)
+                Spacer(Modifier.height(4.dp))
+                Text("Three quick steps, once. Lumen listens only after you tap the bubble, and only a song fingerprint leaves the phone, never the recording.", style = Lumen.type.small, color = c.textDim)
+                Spacer(Modifier.height(14.dp))
+            }
+            item {
+                SetupStep(1, "Microphone", "To hear the song. Used only while the bubble is listening.", mic, "Allow") {
+                    runCatching { askMic.launch(Manifest.permission.RECORD_AUDIO) }
+                }
+                if (!mic) Text("Nothing happens when you tap Allow? Open App info → Permissions → Microphone → Allow.", style = Lumen.type.small, color = c.textFaint, modifier = Modifier.pressable({ appInfo() }).padding(start = 44.dp, bottom = 8.dp))
+            }
+            item {
+                SetupStep(2, "Show over other apps", "So the bubble can sit on top of Instagram, YouTube and the rest.", overlay, "Open settings") {
+                    overlayTried = true
+                    runCatching { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))) }
+                        .onFailure { runCatching { context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) } }
+                }
+                if (!overlay) {
+                    Column(Modifier.padding(start = 44.dp, bottom = 8.dp)) {
+                        Text(
+                            if (overlayTried) "Is the switch grey, or does the phone say \"Restricted setting\"? That's Android being careful with apps installed from outside the Play Store. Fix it once:"
+                            else "If the phone says \"Restricted setting\":",
+                            style = Lumen.type.small, color = c.textDim,
+                        )
+                        Text("1. Tap \"Open App info\" below\n2. Tap ⋮ at the top right\n3. Tap \"Allow restricted settings\"\n4. Come back and tap \"Open settings\" again", style = Lumen.type.small, color = c.text, modifier = Modifier.padding(vertical = 6.dp))
+                        LButton("Open App info", { appInfo() }, style = ButtonStyle.Secondary)
+                    }
+                }
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33) item {
+                SetupStep(3, "Notification (optional)", "Shows \"Song finder is on\" with a Turn off button, so you always know.", notif, "Allow") {
+                    runCatching { askNotif.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                }
+            }
+            item {
+                Text(
+                    "Next, Android asks \"Start recording or casting?\". That is how Lumen hears this phone's sound; it takes the sound only, never your screen. Say no and Lumen uses the mic instead.\n\nYour phone may also show a safety warning because Lumen isn't from the Play Store. Lumen is open source: anyone can read its code.",
+                    style = Lumen.type.small, color = c.textFaint, modifier = Modifier.padding(vertical = 10.dp),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    LButton("Not now", onClose, style = ButtonStyle.Ghost)
+                    Spacer(Modifier.weight(1f))
+                    LButton("Turn on the bubble", onReady, enabled = mic && overlay)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupStep(n: Int, title: String, why: String, done: Boolean, action: String, onClick: () -> Unit) {
+    val c = Lumen.colors
+    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(32.dp).clip(CircleShape).background(if (done) Color(0xFF2E9E5B) else c.surfaceHigh), contentAlignment = Alignment.Center) {
+            Text(if (done) "✓" else "$n", style = Lumen.type.label, color = if (done) Color.White else c.text)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Lumen.type.bodyStrong, color = c.text)
+            Text(why, style = Lumen.type.small, color = c.textDim)
+        }
+        Spacer(Modifier.width(8.dp))
+        if (done) Text("Done", style = Lumen.type.label, color = Color(0xFF2E9E5B)) else LButton(action, onClick)
     }
 }
 

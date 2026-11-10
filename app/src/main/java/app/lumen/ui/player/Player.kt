@@ -42,7 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Text
+import app.lumen.ui.components.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -383,46 +383,6 @@ private fun SeekBar() {
             Text(formatDuration(dragging?.let { (it * duration).toLong() } ?: positionMs), style = Lumen.type.small, color = c.textDim)
             Spacer(Modifier.weight(1f))
             Text(formatDuration(durationMs), style = Lumen.type.small, color = c.textDim)
-        }
-    }
-}
-
-@Composable
-private fun LyricsPanel(track: Track) {
-    val c = Lumen.colors
-    val positionMs = Graph.player.progress.collectAsState().value.positionMs
-    var lyrics by remember(track.id) { mutableStateOf<Lyrics?>(null) }
-    var loading by remember(track.id) { mutableStateOf(true) }
-    LaunchedEffect(track.id) {
-        lyrics = runCatching { Graph.repo.lyrics(track) }.getOrNull()
-        loading = false
-    }
-    val list = rememberLazyListState()
-    val l = lyrics
-    when {
-        loading -> Text("Finding lyrics…", style = Lumen.type.body, color = c.textDim)
-        l == null || l.lines.isEmpty() -> Text("No lyrics for this song", style = Lumen.type.title, color = c.textDim, textAlign = TextAlign.Center)
-        else -> {
-            val active = if (l.synced) l.lines.indexOfLast { it.timeMs <= positionMs + 300 }.coerceAtLeast(0) else -1
-            // Follows the song, but never yanks the list away while you're reading ahead with your finger.
-            LaunchedEffect(active) { if (active >= 0 && !list.isScrollInProgress) list.animateScrollToItem((active - 2).coerceAtLeast(0)) }
-            LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(vertical = 12.dp)) {
-                itemsIndexed(l.lines) { i, line ->
-                    val past = l.synced && i < active
-                    Text(
-                        line.text.ifBlank { "♪" },
-                        style = Lumen.type.title,
-                        color = when {
-                            !l.synced -> c.text
-                            i == active -> c.text
-                            past -> c.textDim
-                            else -> c.textFaint
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                            .then(if (l.synced) Modifier.pressable({ Graph.player.seekTo(line.timeMs) }) else Modifier),
-                    )
-                }
-            }
         }
     }
 }
