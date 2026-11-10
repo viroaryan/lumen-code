@@ -52,6 +52,37 @@ class MusicRepository(
     /** Sources that are switched on and not currently failing. */
     private fun on(source: Source) = source in store.settings.sources && SourceHealth.available(source)
 
+    // ---- Health check -------------------------------------------------------------------------
+
+    /** One music source's result in [checkSources]. */
+    data class SourceCheck(val source: Source, val searchOk: Boolean, val streamOk: Boolean, val detail: String)
+
+    /**
+     * Tests every catalogue end to end, the way playing a song does: search, turn the first result
+     * into a stream link, and read the first bytes of that stream. Nothing is cached or saved.
+     */
+    suspend fun checkSources(): List<SourceCheck> = coroutineScope {
+        fun probe(url: String): Boolean = runCatching {
+            val request = okhttp3.Request.Builder().url(url).header("User-Agent", Http.USER_AGENT).header("Range", "bytes=0-2047").build()
+            Http.client.newCall(request).execute().use { it.isSuccessful && (it.body.byteStream().read() >= 0) }
+        }.getOrDefault(false)
+
+        suspend fun check(source: Source, search: () -> List<Track>, resolve: (Track) -> ResolvedStream) = withContext(Dispatchers.IO) {
+            val found = runCatching { search() }.getOrElse { e -> return@withContext SourceCheck(source, false, false, "Search failed: ${e.message.orEmpty().take(80)}") }
+            val track = found.firstOrNull() ?: return@withContext SourceCheck(source, false, false, "Search returned nothing")
+            val stream = runCatching { resolve(track) }.getOrElse { e -> return@withContext SourceCheck(source, true, false, "${found.size} results, but no stream: ${e.message.orEmpty().take(80)}") }
+            val ok = probe(stream.url)
+            SourceCheck(source, true, ok, if (ok) "${found.size} results · stream plays" else "${found.size} results, but the stream didn't answer")
+        }.also { android.util.Log.i("LumenHealth", "${it.source}: search=${it.searchOk} stream=${it.streamOk} (${it.detail})") }
+
+        val q = "Arijit Singh"
+        listOf(
+            async { check(Source.YOUTUBE, { youtube.searchTracks(q) }, { youtube.resolve(it, Quality.HIGH) }) },
+            async { check(Source.SAAVN, { saavn.searchTracks(q) }, { saavn.resolve(it, Quality.HIGH) }) },
+            async { check(Source.SOUNDCLOUD, { soundcloud.searchTracks(q) }, { soundcloud.resolve(it, Quality.HIGH) }) },
+        ).map { it.await() }
+    }
+
     // ---- Search -------------------------------------------------------------------------------
 
     /** Emits the results gathered so far each time a source answers, so the fastest one shows at once. */

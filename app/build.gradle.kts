@@ -35,8 +35,8 @@ android {
         applicationId = "app.lumen"
         minSdk = 26
         targetSdk = 37
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
     }
 
     signingConfigs {
@@ -117,10 +117,10 @@ dependencies {
     implementation("androidx.media3:media3-session:1.11.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
 
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
-    implementation("com.squareup.okhttp3:okhttp:5.1.0")
-    implementation("io.coil-kt.coil3:coil-compose:3.5.0")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.27.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
+    implementation("io.coil-kt.coil3:coil-compose:3.6.3")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")

@@ -114,6 +114,7 @@ object SongFinder {
         val written = AtomicInteger(0)
         val done = AtomicBoolean(false)
         val resampler = Resampler(rate)
+        var readerJob: kotlinx.coroutines.Job? = null
         try {
             runCatching { rec.startRecording() }
             if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) return@coroutineScope Outcome.MicBusy
@@ -131,6 +132,7 @@ object SongFinder {
                 }
                 done.set(true)
             }
+            readerJob = reader
 
             var heardMusic = false
             var outcome: Outcome = Outcome.NotFound
@@ -156,7 +158,6 @@ object SongFinder {
             }
             if (outcome == Outcome.TooQuiet && heardMusic) outcome = Outcome.NotFound
             done.set(true)
-            reader.cancel()
             outcome
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -164,8 +165,11 @@ object SongFinder {
             Outcome.NotFound
         } finally {
             done.set(true)
+            // Stop first (that ends a read in progress), wait for the reading thread to leave the
+            // recorder, and only then free it: freeing it mid-read can crash the whole app.
             runCatching { rec.stop() }
-            rec.release()
+            withContext(kotlinx.coroutines.NonCancellable) { withTimeoutOrNull(1500) { runCatching { readerJob?.join() } } }
+            runCatching { rec.release() }
         }
     }
 

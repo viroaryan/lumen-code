@@ -112,6 +112,8 @@ class MainActivity : ComponentActivity() {
         intent ?: return
         if (intent.getBooleanExtra(EXTRA_OPEN_PLAYER, false)) {
             appState?.playerOpen = true
+            // Coming from the song finder bubble: its sheet shouldn't sit on top of the player.
+            appState?.identifyOpen = false
             intent.removeExtra(EXTRA_OPEN_PLAYER)
         }
         intent.getStringExtra(EXTRA_PLAY_TRACK)?.let { json ->

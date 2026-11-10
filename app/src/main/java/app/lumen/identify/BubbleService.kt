@@ -42,8 +42,8 @@ import app.lumen.Graph
 import app.lumen.MainActivity
 import app.lumen.R
 import coil3.asDrawable
+import coil3.request.allowHardware
 import app.lumen.data.IdentifiedSong
-import app.lumen.data.source.Http
 import app.lumen.engine.Guardian
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -91,7 +91,7 @@ class BubbleService : Service() {
         }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + Guardian.handler)
     private lateinit var wm: WindowManager
     private var bubble: BubbleView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
@@ -152,7 +152,8 @@ class BubbleService : Service() {
     private fun overlayParams(w: Int, h: Int, focusable: Boolean = false) = WindowManager.LayoutParams(
         w, h,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        (if (focusable) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        (if (focusable) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
         PixelFormat.TRANSLUCENT,
     ).apply { gravity = Gravity.TOP or Gravity.START }
 
@@ -314,12 +315,47 @@ class BubbleService : Service() {
         }
     }
 
+    private var opening: Job? = null
+
+    /**
+     * Finds the song in the user's sources and starts it right here, from the service, so the music
+     * plays even on phones that stop an app from opening itself over another one. Lumen is then
+     * brought to the front with the player open.
+     */
     private fun playInLumen(song: IdentifiedSong) {
-        hideCard()
+        if (opening?.isActive == true) return
+        showCard().message("Opening in Lumen…", song.title, retry = false)
+        opening = scope.launch {
+            val track = runCatching { SongFinder.findTrack(song) }.getOrNull()
+            if (track == null) {
+                showCard().message("Couldn't find it in Lumen", "${song.title} isn't in your music sources right now.", retry = false)
+                return@launch
+            }
+            Graph.player.startRadio(track)
+            openLumen()
+            // Some phones (Vivo, Xiaomi, Oppo…) block opening over another app unless allowed in
+            // their settings. The song is already playing; say so instead of leaving a dead button.
+            delay(1500)
+            if (Guardian.appInForeground()) hideCard()
+            else showCard().playing(song)
+        }
+    }
+
+    /** Brings Lumen to the front with the player showing. */
+    private fun openLumen() {
         val intent = Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(MainActivity.EXTRA_FIND_SONG, Http.json.encodeToString(IdentifiedSong.serializer(), song))
-        runCatching { startActivity(intent) }.onFailure { Guardian.record("bubble open", it) }
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            .putExtra(MainActivity.EXTRA_OPEN_PLAYER, true)
+        // Android 14+ only lets a background app open a screen through a PendingIntent that opts in.
+        val sent = runCatching {
+            val options = android.app.ActivityOptions.makeBasic()
+            if (Build.VERSION.SDK_INT >= 34) {
+                options.setPendingIntentBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+            }
+            PendingIntent.getActivity(this, 42, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                .send(this, 0, null, null, null, null, options.toBundle())
+        }.onFailure { Guardian.record("bubble open (pending)", it) }.isSuccess
+        if (!sent) runCatching { startActivity(intent) }.onFailure { Guardian.record("bubble open", it) }
     }
 
     // ---- The card --------------------------------------------------------------------------------
@@ -345,9 +381,65 @@ class BubbleService : Service() {
         c.root.animate().alpha(0f).translationY(-dp(30f)).setDuration(160).withEndAction { runCatching { wm.removeView(c.root) } }.start()
     }
 
+    /** Closes only the card (✕ or a swipe). The bubble stays, ready for the next song. */
+    private fun dismissCard() {
+        listening?.cancel()
+        opening?.cancel()
+        bubble?.mode = BubbleView.Mode.IDLE
+        hideCard()
+    }
+
+    /** The card's container: a sideways or upward swipe throws the card away. */
+    @SuppressLint("ViewConstructor")
+    private inner class SwipeLayout : LinearLayout(this@BubbleService) {
+        private val slop = ViewConfiguration.get(context).scaledTouchSlop
+        private var downX = 0f
+        private var downY = 0f
+        private var swiping = false
+
+        override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; swiping = false }
+                MotionEvent.ACTION_MOVE -> if (hypot(e.rawX - downX, e.rawY - downY) > slop) { swiping = true; return true }
+            }
+            return false
+        }
+
+        @SuppressLint("ClickableViewAccessibility")
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            val dx = e.rawX - downX
+            val dy = (e.rawY - downY).coerceAtMost(0f)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; swiping = false }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!swiping && hypot(dx, dy) > slop) swiping = true
+                    if (swiping) {
+                        // Follow the finger along whichever way it mostly moves.
+                        if (kotlin.math.abs(dx) >= -dy) { translationX = dx; translationY = 0f } else { translationY = dy; translationX = 0f }
+                        alpha = (1f - maxOf(kotlin.math.abs(translationX) / width.coerceAtLeast(1), -translationY / (height.coerceAtLeast(1) * 1.5f))).coerceIn(0.2f, 1f)
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val far = kotlin.math.abs(translationX) > width * 0.28f || -translationY > height * 0.45f
+                    if (swiping && far && e.actionMasked == MotionEvent.ACTION_UP) {
+                        val toX = if (translationX != 0f) Math.signum(translationX) * width * 1.2f else 0f
+                        val toY = if (translationX == 0f) -height * 1.5f else 0f
+                        val root = this
+                        animate().translationX(toX).translationY(toY).alpha(0f).setDuration(140).withEndAction {
+                            if (card?.root === root) { card = null; listening?.cancel(); opening?.cancel(); bubble?.mode = BubbleView.Mode.IDLE }
+                            runCatching { wm.removeView(root) }
+                        }.start()
+                    } else animate().translationX(0f).translationY(0f).alpha(1f).setDuration(160).start()
+                    swiping = false
+                }
+            }
+            return true
+        }
+    }
+
     /** The answer panel at the top of the screen. */
     private inner class Card {
-        val root = LinearLayout(this@BubbleService).apply {
+        val root: LinearLayout = SwipeLayout().apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dpi(12f), dpi(12f), dpi(8f), dpi(12f))
@@ -368,7 +460,7 @@ class BubbleService : Service() {
         private val close = TextView(this@BubbleService).apply {
             text = "✕"; textSize = 16f; setTextColor(Color.argb(200, 255, 255, 255)); gravity = Gravity.CENTER
             setPadding(dpi(10f), dpi(8f), dpi(10f), dpi(8f))
-            setOnClickListener { listening?.cancel(); bubble?.mode = BubbleView.Mode.IDLE; hideCard() }
+            setOnClickListener { dismissCard() }
         }
 
         init {
@@ -417,6 +509,15 @@ class BubbleService : Service() {
             action.setOnClickListener { listen() }
         }
 
+        /** The song is playing in Lumen but the phone didn't let Lumen come to the front. */
+        fun playing(song: IdentifiedSong) {
+            title.text = "Playing in Lumen"
+            subtitle.text = song.title
+            action.visibility = View.VISIBLE
+            action.text = "Open Lumen"
+            action.setOnClickListener { openLumen(); hideCard() }
+        }
+
         fun found(song: IdentifiedSong) {
             title.text = song.title
             subtitle.text = song.artist.ifBlank { "Found it" }
@@ -426,6 +527,9 @@ class BubbleService : Service() {
             song.artwork?.let { url ->
                 runCatching {
                     val request = coil3.request.ImageRequest.Builder(this@BubbleService).data(url)
+                        // Overlay windows can be drawn without the GPU, which can't draw GPU-only
+                        // ("hardware") bitmaps and crashes: ask for an ordinary one.
+                        .allowHardware(false)
                         .target(onSuccess = { image ->
                             art.clearColorFilter(); art.setPadding(0, 0, 0, 0)
                             art.setImageDrawable(image.asDrawable(resources))
@@ -440,6 +544,7 @@ class BubbleService : Service() {
     override fun onDestroy() {
         _running.value = false
         listening?.cancel()
+        opening?.cancel()
         scope.cancel()
         hideTrash()
         card?.let { runCatching { wm.removeView(it.root) } }

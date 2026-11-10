@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import app.lumen.Graph
+import app.lumen.data.MusicRepository
 import app.lumen.data.LibraryBackup
 import app.lumen.data.Source
 import app.lumen.data.ThemeMode
@@ -68,6 +69,8 @@ fun SettingsScreen(contentPadding: PaddingValues) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var usage by remember { mutableStateOf<StorageGuard.Usage?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    var checks by remember { mutableStateOf<List<MusicRepository.SourceCheck>?>(null) }
     LaunchedEffect(Unit) { usage = StorageGuard.usage(context) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) app.toast("Notifications are off for Lumen in system settings")
@@ -229,6 +232,26 @@ fun SettingsScreen(contentPadding: PaddingValues) {
             Action("Restore from a backup file", "Adds everything from the backup to your library. Nothing is deleted.") {
                 runCatching { restoreLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
                     .onFailure { app.toast("No app available to open files") }
+            }
+        }
+
+        item { Group("Music sources") }
+        item {
+            Action(
+                if (checking) "Checking…" else "Check music sources",
+                checks?.joinToString("\n") { r ->
+                    val mark = if (r.searchOk && r.streamOk) "✓" else "✕"
+                    "$mark ${r.source.label}: ${r.detail}"
+                } ?: "Tests search and playback on YouTube Music, JioSaavn and SoundCloud",
+            ) {
+                if (checking) return@Action
+                checking = true
+                scope.launch {
+                    checks = runCatching { Graph.repo.checkSources() }.getOrNull()
+                    checking = false
+                    val bad = checks?.count { !(it.searchOk && it.streamOk) }
+                    app.toast(when (bad) { null -> "Couldn't run the check"; 0 -> "All music sources are working"; else -> "$bad source(s) have a problem right now" })
+                }
             }
         }
 
